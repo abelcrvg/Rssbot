@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/*.py": {
+    "api/feed.py": {
       "runtime": "python3.9"
     }
   }
