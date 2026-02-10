@@ -2,9 +2,31 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from dateutil import parser
+import json
+import os
 
 URL = "https://ge.globo.com/futebol/brasileirao-serie-a/"
+HISTORICO_ARQ = "historico.json"
 
+
+# ===============================
+# HISTÓRICO
+# ===============================
+def carregar_historico():
+    if os.path.exists(HISTORICO_ARQ):
+        with open(HISTORICO_ARQ, "r") as f:
+            return set(json.load(f))
+    return set()
+
+
+def salvar_historico(h):
+    with open(HISTORICO_ARQ, "w") as f:
+        json.dump(list(h), f)
+
+
+# ===============================
+# EXTRAÇÃO
+# ===============================
 def extrair_noticias():
     r = requests.get(URL)
     soup = BeautifulSoup(r.text, "html.parser")
@@ -20,26 +42,23 @@ def extrair_noticias():
         if not link or "/brasileirao-serie-a/" not in link:
             continue
 
-        # entrar na matéria
         try:
             r2 = requests.get(link)
             s2 = BeautifulSoup(r2.text, "html.parser")
 
-            # data real da notícia
             data_tag = s2.find("meta", {"property": "article:published_time"})
-            if data_tag and data_tag.get("content"):
+            if data_tag:
                 data_real = parser.parse(data_tag["content"])
             else:
                 data_real = datetime.now()
 
-            # imagem principal
             img_tag = s2.find("meta", {"property": "og:image"})
             imagem = img_tag["content"] if img_tag else ""
 
-        except Exception as e:
+        except Exception:
             continue
 
-        # só das últimas 24 horas
+        # apenas últimas 24 horas
         if data_real < datetime.now() - timedelta(days=1):
             continue
 
@@ -52,16 +71,30 @@ def extrair_noticias():
 
     return noticias
 
-def gerar_feed():
-    noticias = extrair_noticias()
 
-    if not noticias:
-        print("Nenhuma notícia recente nas últimas 24h.")
+# ===============================
+# GERAÇÃO DO RSS
+# ===============================
+def gerar_feed():
+    print("Buscando notícias...")
+
+    noticias = extrair_noticias()
+    historico = carregar_historico()
+
+    novas = []
+
+    for n in noticias:
+        if n["link"] not in historico:
+            novas.append(n)
+            historico.add(n["link"])
+
+    if not novas:
+        print("Nenhuma novidade.")
         return
 
     items = ""
 
-    for n in noticias:
+    for n in novas:
         items += f"""
         <item>
           <title>{n['titulo']}</title>
@@ -80,7 +113,7 @@ def gerar_feed():
   <channel>
     <title>Brasileirão Série A – Últimas 24h</title>
     <link>{URL}</link>
-    <description>Atualizado automaticamente com imagens e datas</description>
+    <description>Atualizado automaticamente</description>
     <language>pt-br</language>
     {items}
   </channel>
@@ -90,7 +123,11 @@ def gerar_feed():
     with open("feed.xml", "w", encoding="utf-8") as f:
         f.write(rss)
 
-    print("Feed atualizado com", len(noticias), "notícias.")
+    salvar_historico(historico)
 
+    print(f"{len(novas)} notícias novas adicionadas.")
+
+
+# executar manualmente se quiser
 if __name__ == "__main__":
     gerar_feed()
