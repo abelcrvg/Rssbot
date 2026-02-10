@@ -5,13 +5,12 @@ from dateutil import parser
 import json
 import os
 
-URL = "https://ge.globo.com/futebol/brasileirao-serie-a/"
 HISTORICO_ARQ = "historico.json"
 
 
-# ===============================
+# ==================================================
 # HISTÓRICO
-# ===============================
+# ==================================================
 def carregar_historico():
     if os.path.exists(HISTORICO_ARQ):
         with open(HISTORICO_ARQ, "r") as f:
@@ -24,18 +23,17 @@ def salvar_historico(h):
         json.dump(list(h), f)
 
 
-# ===============================
-# EXTRAÇÃO
-# ===============================
-def extrair_noticias():
+# ==================================================
+# GE
+# ==================================================
+def extrair_ge():
+    URL = "https://ge.globo.com/futebol/brasileirao-serie-a/"
     r = requests.get(URL)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    links = soup.find_all("a", class_="feed-post-link")
-
     noticias = []
 
-    for a in links:
+    for a in soup.find_all("a", class_="feed-post-link"):
         titulo = a.get_text(strip=True)
         link = a.get("href")
 
@@ -47,53 +45,160 @@ def extrair_noticias():
             s2 = BeautifulSoup(r2.text, "html.parser")
 
             data_tag = s2.find("meta", {"property": "article:published_time"})
-            if data_tag:
-                data_real = parser.parse(data_tag["content"])
-            else:
-                data_real = datetime.now()
+            data = parser.parse(data_tag["content"]) if data_tag else datetime.now()
 
             img_tag = s2.find("meta", {"property": "og:image"})
             imagem = img_tag["content"] if img_tag else ""
 
-        except Exception:
-            continue
-
-        # apenas últimas 24 horas
-        if data_real < datetime.now() - timedelta(days=1):
+        except:
             continue
 
         noticias.append({
             "titulo": titulo,
             "link": link,
-            "data": data_real,
+            "data": data,
             "imagem": imagem
         })
 
     return noticias
 
 
-# ===============================
-# GERAÇÃO DO RSS
-# ===============================
-def gerar_feed():
-    print("Buscando notícias...")
+# ==================================================
+# ESPN
+# ==================================================
+def extrair_espn():
+    URL = "https://www.espn.com.br/futebol/"
+    r = requests.get(URL)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-    noticias = extrair_noticias()
+    noticias = []
+
+    for a in soup.find_all("a", href=True):
+        link = a["href"]
+
+        if "/artigo/" not in link:
+            continue
+
+        titulo = a.get_text(strip=True)
+        if not titulo:
+            continue
+
+        try:
+            r2 = requests.get(link)
+            s2 = BeautifulSoup(r2.text, "html.parser")
+
+            img_tag = s2.find("meta", {"property": "og:image"})
+            imagem = img_tag["content"] if img_tag else ""
+
+        except:
+            continue
+
+        noticias.append({
+            "titulo": titulo,
+            "link": link,
+            "data": datetime.now(),
+            "imagem": imagem
+        })
+
+    return noticias
+
+
+# ==================================================
+# UOL
+# ==================================================
+def extrair_uol():
+    URL = "https://www.uol.com.br/esporte/futebol/"
+    r = requests.get(URL)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    noticias = []
+
+    for a in soup.find_all("a", href=True):
+        link = a["href"]
+
+        if "/noticias/" not in link:
+            continue
+
+        titulo = a.get_text(strip=True)
+        if not titulo:
+            continue
+
+        noticias.append({
+            "titulo": titulo,
+            "link": link,
+            "data": datetime.now(),
+            "imagem": ""
+        })
+
+    return noticias
+
+
+# ==================================================
+# LANCE
+# ==================================================
+def extrair_lance():
+    URL = "https://www.lance.com.br/"
+    r = requests.get(URL)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    noticias = []
+
+    for a in soup.find_all("a", href=True):
+        link = a["href"]
+
+        if "/futebol/" not in link:
+            continue
+
+        titulo = a.get_text(strip=True)
+        if not titulo:
+            continue
+
+        noticias.append({
+            "titulo": titulo,
+            "link": link,
+            "data": datetime.now(),
+            "imagem": ""
+        })
+
+    return noticias
+
+
+# ==================================================
+# GERAÇÃO DO FEED
+# ==================================================
+def gerar_feed():
+    print("Coletando fontes...")
+
+    noticias = (
+        extrair_ge()
+        + extrair_espn()
+        + extrair_uol()
+        + extrair_lance()
+    )
+
+    agora = datetime.now()
     historico = carregar_historico()
 
     novas = []
 
     for n in noticias:
-        if n["link"] not in historico:
-            novas.append(n)
-            historico.add(n["link"])
+        if n["link"] in historico:
+            continue
+
+        if n["data"] < agora - timedelta(days=1):
+            continue
+
+        novas.append(n)
+        historico.add(n["link"])
 
     if not novas:
         print("Nenhuma novidade.")
         return
 
-    items = ""
+    # ordenar mais recentes primeiro
+    novas.sort(key=lambda x: x["data"], reverse=True)
 
+    items = ""
     for n in novas:
         items += f"""
         <item>
@@ -111,9 +216,9 @@ def gerar_feed():
     rss = f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
-    <title>Brasileirão Série A – Últimas 24h</title>
-    <link>{URL}</link>
-    <description>Atualizado automaticamente</description>
+    <title>Central de Notícias do Futebol</title>
+    <link>https://rssbot-production.up.railway.app/feed</link>
+    <description>GE + ESPN + UOL + Lance</description>
     <language>pt-br</language>
     {items}
   </channel>
@@ -125,9 +230,8 @@ def gerar_feed():
 
     salvar_historico(historico)
 
-    print(f"{len(novas)} notícias novas adicionadas.")
+    print(f"{len(novas)} novidades publicadas.")
 
 
-# executar manualmente se quiser
 if __name__ == "__main__":
     gerar_feed()
